@@ -58,10 +58,11 @@ def load_functions_list(path: str):
     with open(path, 'r') as f:
         functions_list = json.load(f)
         for func in functions_list:
+            fn = sympify(func)
             functions.append(
                 {
-                    "func": func,
-                    "num_params": len(func.free_symbols),
+                    "func": fn,
+                    "num_params": len(fn.free_symbols),
                     "weight": 1.0,
                 }
             )
@@ -264,7 +265,7 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
     return new_function_list
 
 def generate_dataset(num_functions: int, directory_path: str,
-                     num_params: int, overshoot: float = 0.75, weighted=True, max_depth=10,
+                     num_params: int, overshoot = 0.75, weighted=True, max_depth=10,
                      constant_chance=standard_constant_chance, constant_range=(-10,10),
                      single_variable_chance=standard_single_variable_chance, complex_functions=False, num_test_points=4, tolerance=0.001,
                      prune_constants=True, round_n: None | int = 3, num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0):
@@ -287,7 +288,7 @@ def generate_dataset(num_functions: int, directory_path: str,
     :param num_functions: The number of functions to be generated to make up the dataset
     :param directory_path: The path to the directory where the dataset will be saved
     :param num_params: The number of parameters for the functions to have
-    :param overshoot: A multiple of the desired number of functions to attempt to overshoot by: true_num_functions = num_functions * (1 + overshoot). This parameter is doubled in the second pass and onwards
+    :param overshoot: A multiple of the desired number of functions to attempt to overshoot by: true_num_functions = num_functions * (1 + overshoot). This parameter is scaled by 2.5 in the second pass and onwards
     :param weighted: If the random selection of functions used to construct the final functions should be weighted
     :param max_depth: The maximum depth of the functions to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
     :param constant_chance: The chance of a constant being used as an input, as a function of the maximum depth - the current depth
@@ -304,11 +305,17 @@ def generate_dataset(num_functions: int, directory_path: str,
     :return:
     """
     start_time = datetime.datetime.now()
-    dataset = construct_random_scalar_function_set(num_functions, num_params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, overshoot, max_wait=max_generate_wait)
+    dataset = construct_random_scalar_function_set(num_functions, num_params, weighted=weighted, max_depth=max_depth,
+                                                   constant_chance=constant_chance, constant_range=constant_range,
+                                                   single_variable_chance=single_variable_chance, complex_functions=complex_functions,
+                                                   overshoot=overshoot, num_processes=num_processes, max_wait=max_generate_wait)
     dataset = prune_function_list(dataset, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
     while len(dataset) < num_functions:
         print(len(dataset))
-        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, 2.5 * overshoot, max_wait=max_generate_wait)
+        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params, weighted=weighted, max_depth=max_depth,
+                                                   constant_chance=constant_chance, constant_range=constant_range,
+                                                   single_variable_chance=single_variable_chance, complex_functions=complex_functions,
+                                                   overshoot=2.5 * overshoot, num_processes=num_processes, max_wait=max_generate_wait)
         dataset |= prune_function_list(temp_dataset, prune_constants=prune_constants, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
     dataset = list(dataset)
     np.random.shuffle(dataset)
@@ -328,7 +335,7 @@ def main():
     generate_dataset(
         100000,
         "datasets",
-        1,
+        5,
         weighted=True,
         max_depth=5,
     )
