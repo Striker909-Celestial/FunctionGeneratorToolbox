@@ -114,7 +114,7 @@ def construct_random_scalar_function(params: int | list, weighted=True, max_dept
          return re(f_new)
      return f_new
 
-def construct_random_scalar_function_set(num_functions: int, params: int, weighted=True, max_depth=10,
+def construct_random_scalar_function_set(num_functions: int, num_params: int, weighted=True, max_depth=10,
                                       constant_chance=standard_constant_chance, constant_range=(-10,10),
                                       single_variable_chance=standard_single_variable_chance, complex_functions=False,
                                       overshoot=0.75, num_processes: int | None = None, chunk_size: int = 10000, max_wait=1.0) -> set:
@@ -130,7 +130,7 @@ def construct_random_scalar_function_set(num_functions: int, params: int, weight
         Will print telemetry readouts to the terminal during processing.
 
         :param num_functions: The number of functions to be constructed
-        :param params: A number of parameters for the function to have
+        :param num_params: A number of parameters for the function to have
         :param weighted: If the random selection of functions used to construct the final functions should be weighted
         :param max_depth: The maximum depth of the functions to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
         :param constant_chance: The chance of a constant being used as an input, as a function of the maximum depth - the current depth
@@ -151,7 +151,7 @@ def construct_random_scalar_function_set(num_functions: int, params: int, weight
     num_chunks = int(num_functions * (1.0 + overshoot) / chunk_size) + 1
     functions_per_chunk = int(num_functions * (1.0 + overshoot) / num_chunks)
     print(f"Constructing {functions_per_chunk * num_chunks} functions in {num_chunks} chunks")
-    inputs = [params for i in range(functions_per_chunk)]
+    inputs = [num_params for i in range(functions_per_chunk)]
     start_time = datetime.datetime.now()
     for i in range(num_chunks):
         results = []
@@ -264,13 +264,15 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
     return new_function_list
 
 def generate_dataset(num_functions: int, directory_path: str,
-                     params: int, overshoot: float = 0.75, weighted=True, max_depth=10,
+                     num_params: int, overshoot: float = 0.75, weighted=True, max_depth=10,
                      constant_chance=standard_constant_chance, constant_range=(-10,10),
                      single_variable_chance=standard_single_variable_chance, complex_functions=False, num_test_points=4, tolerance=0.001,
                      prune_constants=True, round_n: None | int = 3, num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0):
     """
     Generates a dataset of random scalar functions of a certain size using **construct_random_scalar_function_set**
     and **prune_function_list**. This dataset is saved to a JSON file as a list of strings.
+
+    The JSON file will be saved to **directory_path** as **n{num_functions}-x{params}-y1.json**.
 
     Two or more passes will be taken to fully generate the dataset.
     The first pass will generate the majority of the dataset but will intentionally undershoot the desired number of functions.
@@ -284,7 +286,7 @@ def generate_dataset(num_functions: int, directory_path: str,
 
     :param num_functions: The number of functions to be generated to make up the dataset
     :param directory_path: The path to the directory where the dataset will be saved
-    :param params: The number of parameters for the functions to have
+    :param num_params: The number of parameters for the functions to have
     :param overshoot: A multiple of the desired number of functions to attempt to overshoot by: true_num_functions = num_functions * (1 + overshoot). This parameter is doubled in the second pass and onwards
     :param weighted: If the random selection of functions used to construct the final functions should be weighted
     :param max_depth: The maximum depth of the functions to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
@@ -302,19 +304,19 @@ def generate_dataset(num_functions: int, directory_path: str,
     :return:
     """
     start_time = datetime.datetime.now()
-    dataset = construct_random_scalar_function_set(num_functions, params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, overshoot, max_wait=max_generate_wait)
+    dataset = construct_random_scalar_function_set(num_functions, num_params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, overshoot, max_wait=max_generate_wait)
     dataset = prune_function_list(dataset, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
     while len(dataset) < num_functions:
         print(len(dataset))
-        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, 2.5 * overshoot, max_wait=max_generate_wait)
+        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params, weighted, max_depth, constant_chance, constant_range, single_variable_chance, complex_functions, num_processes, 2.5 * overshoot, max_wait=max_generate_wait)
         dataset |= prune_function_list(temp_dataset, prune_constants=prune_constants, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
     dataset = list(dataset)
     np.random.shuffle(dataset)
     dataset = dataset[:num_functions]
     print("\rDataset fully generated, saving to file")
-    with open(f"{directory_path}/n{num_functions}-x{params}-y1.json", 'w') as f:
+    with open(f"{directory_path}/n{num_functions}-x{num_params}-y1.json", 'w') as f:
         json.dump([str(datum) for datum in dataset], f, indent=4)
-    print(f"Dataset saved to {directory_path}/n{num_functions}-x{params}-y1.json")
+    print(f"Dataset saved to {directory_path}/n{num_functions}-x{num_params}-y1.json")
     end_time = datetime.datetime.now()
     time_elapsed = (end_time - start_time)
     print(f"\nTotal Generation Time: {(datetime.datetime(1, 1, 1) + time_elapsed).strftime("%H:%M:%S")}"
