@@ -1,5 +1,6 @@
 import datetime
 import multiprocessing
+import traceback
 from multiprocessing import freeze_support
 from sympy import *
 import numpy as np
@@ -32,6 +33,7 @@ def load_functions_dict(path: str):
         functions = json.load(f)
         for fn in functions:
             fn["func"] = sympify(fn["func"])
+            fn["num_params"] = len(fn["func"].atoms())
     weights = np.array([fn["weight"] for fn in functions])
     weights = weights / weights.sum()
 
@@ -62,35 +64,41 @@ def load_functions_list(path: str):
             functions.append(
                 {
                     "func": fn,
-                    "num_params": len(fn.free_symbols),
+                    "num_params": len(fn.atoms()),
                     "weight": 1.0,
                 }
             )
-    w = 1.0 / len(functions)
+    w = 1.0 / float(len(functions))
     weights = np.array([w for _ in functions])
 
-def random_function(weighted=True):
+def random_function(function_library: list, weight_list: list, weighted=True):
     """
-    Returns a random function from the function list.
+    Returns a random function from the **function_library**.
+    :param function_library: A list of functions to choose from
+    :param weight_list: A list of weights for the random selection
     :param weighted: If the random selection should be weighted or not
     :return: A function at random
     """
     if weighted:
-        return functions[np.random.choice(len(functions), p=weights)]
-    return functions[np.random.randint(len(functions))]
+        fn = function_library[np.random.choice(len(function_library), p=weight_list)]
+        return fn
+    fn = function_library[np.random.randint(len(function_library))]
+    return fn
 
 def standard_constant_chance(d):
     return (10.0 - d)/20.0
 def standard_single_variable_chance(d):
     return (10.0 - d) / 20.0
 
-def construct_random_scalar_function(params: int | list, weighted=True, max_depth=5,
+def construct_random_scalar_function(params: int | list, function_library: list, weight_list: list, weighted=True, max_depth=5,
                                       constant_chance=standard_constant_chance, constant_range=(-10,10),
                                       single_variable_chance=standard_single_variable_chance, complex_functions=False):
      """
-     Constructs a random scalar function from recursively applying functions from the function list.
-     
+     Constructs a random scalar function from recursively applying functions from the **function_library**.
+
      :param params: A number of parameters for the function to have or a list of symbols to use as parameters
+     :param function_library: A list of functions to choose from
+     :param weight_list: A list of weights for the random selection
      :param weighted: If the random selection of functions used to construct the final function should be weighted
      :param max_depth: The maximum depth of the function to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
      :param constant_chance: The chance of a constant being used as an input, as a function of the maximum depth - the current depth
@@ -101,7 +109,7 @@ def construct_random_scalar_function(params: int | list, weighted=True, max_dept
      """
      if type(params) is int:
          params = symbols('x:'+str(params), real=not complex_functions)
-     func = random_function(weighted)
+     func = random_function(function_library, weight_list, weighted)
      inputs = []
      for i in range(func["num_params"]):
          if np.random.rand() < single_variable_chance(max_depth):
@@ -109,18 +117,18 @@ def construct_random_scalar_function(params: int | list, weighted=True, max_dept
          elif max_depth == 0 or np.random.rand() < constant_chance(max_depth):
              inputs.append(round(np.random.uniform(*constant_range), 2))
          else:
-             inputs.append(construct_random_scalar_function(params, weighted, max_depth-1, constant_chance, constant_range, single_variable_chance))
-     f_new = func['func'].subs([(symb, inputs[i]) for i, symb in enumerate(func['func'].free_symbols)])
+             inputs.append(construct_random_scalar_function(params, function_library, weight_list, weighted, max_depth-1, constant_chance, constant_range, single_variable_chance))
+     f_new = func['func'].subs([(symb, inputs[i]) for i, symb in enumerate(func['func'].atoms())])
      if not complex_functions:
          return re(f_new)
      return f_new
 
-def construct_random_scalar_function_set(num_functions: int, num_params: int, weighted=True, max_depth=10,
+def construct_random_scalar_function_set(num_functions: int, num_params: int, function_library: list, weight_list: list, weighted=True, max_depth=10,
                                       constant_chance=standard_constant_chance, constant_range=(-10,10),
                                       single_variable_chance=standard_single_variable_chance, complex_functions=False,
                                       overshoot=0.75, num_processes: int | None = None, chunk_size: int = 10000, max_wait=1.0) -> set:
     """
-        Constructs a set of random scalar functions from recursively applying functions from the function list.
+        Constructs a set of random scalar functions from recursively applying functions from the **function_library**.
 
         This method parallelizes **construct_random_scalar_function**.
 
@@ -132,6 +140,8 @@ def construct_random_scalar_function_set(num_functions: int, num_params: int, we
 
         :param num_functions: The number of functions to be constructed
         :param num_params: A number of parameters for the function to have
+        :param function_library: A list of functions to choose from
+        :param weight_list: A list of weights for the random selection
         :param weighted: If the random selection of functions used to construct the final functions should be weighted
         :param max_depth: The maximum depth of the functions to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
         :param constant_chance: The chance of a constant being used as an input, as a function of the maximum depth - the current depth
@@ -144,19 +154,21 @@ def construct_random_scalar_function_set(num_functions: int, num_params: int, we
         :param max_wait: The maximum time to wait for a function to be constructed before moving on to the next one
         :return: A set of random scalar functions
         """
-    construct_fn_partial = functools.partial(construct_random_scalar_function, weighted=weighted, max_depth=max_depth,
+    construct_fn_partial = functools.partial(construct_random_scalar_function, function_library=function_library,
+                                              weight_list=weight_list, weighted=weighted, max_depth=max_depth,
                                               constant_chance=constant_chance, constant_range=constant_range,
                                               single_variable_chance=single_variable_chance,
                                               complex_functions=complex_functions)
+    params = symbols('x:' + str(num_params), real=not complex_functions)
     output = set()
     num_chunks = int(num_functions * (1.0 + overshoot) / chunk_size) + 1
     functions_per_chunk = int(num_functions * (1.0 + overshoot) / num_chunks)
     print(f"Constructing {functions_per_chunk * num_chunks} functions in {num_chunks} chunks")
-    inputs = [num_params for i in range(functions_per_chunk)]
+    inputs = [params for _ in range(functions_per_chunk)]
     start_time = datetime.datetime.now()
     for i in range(num_chunks):
         results = []
-        print(f"Constructing  a chunk of {functions_per_chunk} functions: {i + 1} / {num_chunks}")
+        print(f"Constructing a chunk of {functions_per_chunk} functions: {i + 1} / {num_chunks}")
         try:
             with ProcessPool(max_workers=num_processes if num_processes is not None else multiprocessing.cpu_count(),
                              max_tasks=1000) as pool:
@@ -264,8 +276,8 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
 
     return new_function_list
 
-def generate_dataset(num_functions: int, directory_path: str,
-                     num_params: int, overshoot = 0.75, weighted=True, max_depth=10,
+def generate_dataset(num_functions: int, directory_path: str, num_params: int, function_library: list, weight_list: list,
+                     overshoot = 0.75, weighted=True, max_depth=10,
                      constant_chance=standard_constant_chance, constant_range=(-10,10),
                      single_variable_chance=standard_single_variable_chance, complex_functions=False, num_test_points=4, tolerance=0.001,
                      prune_constants=True, round_n: None | int = 3, num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0):
@@ -273,7 +285,7 @@ def generate_dataset(num_functions: int, directory_path: str,
     Generates a dataset of random scalar functions of a certain size using **construct_random_scalar_function_set**
     and **prune_function_list**. This dataset is saved to a JSON file as a list of strings.
 
-    The JSON file will be saved to **directory_path** as **n{num_functions}-x{params}-y1.json**.
+    The JSON file will be saved to **directory_path** as **n{num_functions}-x{params}-y1-d{max_depth}.json**.
 
     Two or more passes will be taken to fully generate the dataset.
     The first pass will generate the majority of the dataset but will intentionally undershoot the desired number of functions.
@@ -288,6 +300,8 @@ def generate_dataset(num_functions: int, directory_path: str,
     :param num_functions: The number of functions to be generated to make up the dataset
     :param directory_path: The path to the directory where the dataset will be saved
     :param num_params: The number of parameters for the functions to have
+    :param function_library: A list of functions to choose from
+    :param weight_list: A list of weights for the random selection
     :param overshoot: A multiple of the desired number of functions to attempt to overshoot by: true_num_functions = num_functions * (1 + overshoot). This parameter is scaled by 2.5 in the second pass and onwards
     :param weighted: If the random selection of functions used to construct the final functions should be weighted
     :param max_depth: The maximum depth of the functions to be constructed (i.e., a*(b*(c*(d*e))) has depth 4)
@@ -305,14 +319,16 @@ def generate_dataset(num_functions: int, directory_path: str,
     :return:
     """
     start_time = datetime.datetime.now()
-    dataset = construct_random_scalar_function_set(num_functions, num_params, weighted=weighted, max_depth=max_depth,
+    dataset = construct_random_scalar_function_set(num_functions, num_params, function_library=function_library,
+                                                   weight_list=weight_list, weighted=weighted, max_depth=max_depth,
                                                    constant_chance=constant_chance, constant_range=constant_range,
                                                    single_variable_chance=single_variable_chance, complex_functions=complex_functions,
                                                    overshoot=overshoot, num_processes=num_processes, max_wait=max_generate_wait)
     dataset = prune_function_list(dataset, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
     while len(dataset) < num_functions:
         print(len(dataset))
-        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params, weighted=weighted, max_depth=max_depth,
+        temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params,
+                                                   weight_list=weight_list, function_library=function_library, weighted=weighted, max_depth=max_depth,
                                                    constant_chance=constant_chance, constant_range=constant_range,
                                                    single_variable_chance=single_variable_chance, complex_functions=complex_functions,
                                                    overshoot=2.5 * overshoot, num_processes=num_processes, max_wait=max_generate_wait)
@@ -323,7 +339,7 @@ def generate_dataset(num_functions: int, directory_path: str,
     print("\rDataset fully generated, saving to file")
     with open(f"{directory_path}/n{num_functions}-x{num_params}-y1.json", 'w') as f:
         json.dump([str(datum) for datum in dataset], f, indent=4)
-    print(f"Dataset saved to {directory_path}/n{num_functions}-x{num_params}-y1.json")
+    print(f"Dataset saved to {directory_path}/n{num_functions}-x{num_params}-y1-d{max_depth}.json")
     end_time = datetime.datetime.now()
     time_elapsed = (end_time - start_time)
     print(f"\nTotal Generation Time: {(datetime.datetime(1, 1, 1) + time_elapsed).strftime("%H:%M:%S")}"
@@ -331,11 +347,13 @@ def generate_dataset(num_functions: int, directory_path: str,
     return dataset
 
 def main():
-    load_functions_list("datasets/n1000-x1-y1.json")
+    load_functions_dict("datasets/standard_functions.json")
     generate_dataset(
-        100000,
+        10000,
         "datasets",
-        5,
+        1,
+        function_library=functions,
+        weight_list=weights,
         weighted=True,
         max_depth=5,
     )
