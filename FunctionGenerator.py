@@ -205,7 +205,7 @@ def test_constant(function: Expr, num_test_points=4, tolerance=0.001) -> bool:
     avg = sum(results) / float(len(results))
     return all(abs((result - avg) / avg) < tolerance for result in results)
 
-def prune_function(function: Expr, prune_constants=True, num_test_points=4, tolerance=0.001, complex_functions=False, round_n=2) -> Expr | None:
+def prune_function(function: Expr, min_num_params=1, prune_constants=True, num_test_points=4, tolerance=0.001, complex_functions=False, round_n=2) -> Expr | None:
     """
     Simplifies and tests a function, using certain criteria to determine if it should be discarded.
     
@@ -213,6 +213,7 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=4, tole
     Otherwise, a simplified and rounded version of the function will be returned.
     
     :param function: The function to be simplified and tested
+    :param min_num_params: The minimum number of parameters the function should have, if the function has fewer parameters, it will be discarded
     :param prune_constants: If the function should be discarded if it evaluates to be constant by **test_constant**
     :param num_test_points: The number of test points to be used by **test_constant**
     :param tolerance: The tolerance to be used by **test_constant**
@@ -221,6 +222,8 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=4, tole
     :return: None, or a simplified and rounded version of the function
     """
     try:
+        if len(function.free_symbols) < min_num_params:
+            return None
         func_copy = function.copy()
         a = symbols('a')
         func_copy = func_copy.subs([(symb, a) for symb in func_copy.free_symbols])
@@ -237,7 +240,7 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=4, tole
     except:
         return None
 
-def prune_function_list(function_list: list | set, prune_constants=True, num_test_points=4, tolerance=0.001, complex_functions=False, round_n: int | None = 2, num_processes: int | None = None, max_wait=1.0) -> set:
+def prune_function_list(function_list: list | set, min_num_params=1, prune_constants=True, num_test_points=4, tolerance=0.001, complex_functions=False, round_n: int | None = 2, num_processes: int | None = None, max_wait=1.0) -> set:
     """
         Simplifies and tests each function in a list, using certain criteria to determine if it should be discarded.
         
@@ -246,6 +249,7 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
         Will print telemetry readouts to the terminal during processing.
         
         :param function_list: A list or set of functions to be simplified and tested
+        :param min_num_params: The minimum number of parameters a function should have, if a function has fewer parameters, it will be discarded
         :param prune_constants: If a function should be discarded if it evaluates to be constant by **test_constant**
         :param num_test_points: The number of test points to be used by **test_constant**
         :param tolerance: The tolerance to be used by **test_constant**
@@ -255,7 +259,7 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
         :param max_wait: The maximum time to wait for a function to be simplified and tested before moving on to the next one
         :return: A set of pruned functions
         """
-    prune_fn_partial = functools.partial(prune_function, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance,
+    prune_fn_partial = functools.partial(prune_function, min_num_params=min_num_params, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance,
                                          complex_functions=complex_functions, round_n=round_n)
     results = []
     print(f"Pruning {len(function_list)} functions")
@@ -279,8 +283,9 @@ def prune_function_list(function_list: list | set, prune_constants=True, num_tes
 def generate_dataset(num_functions: int, directory_path: str, num_params: int, function_library: list, weight_list: list,
                      overshoot = 0.75, weighted=True, max_depth=10,
                      constant_chance=standard_constant_chance, constant_range=(-10,10),
-                     single_variable_chance=standard_single_variable_chance, complex_functions=False, num_test_points=4, tolerance=0.001,
-                     prune_constants=True, round_n: None | int = 3, num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0):
+                     single_variable_chance=standard_single_variable_chance, complex_functions=False, 
+                     min_num_params=1, prune_constants=True, num_test_points=4, tolerance=0.001,
+                     round_n: None | int = 3, num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0):
     """
     Generates a dataset of random scalar functions of a certain size using **construct_random_scalar_function_set**
     and **prune_function_list**. This dataset is saved to a JSON file as a list of strings.
@@ -309,6 +314,7 @@ def generate_dataset(num_functions: int, directory_path: str, num_params: int, f
     :param constant_range: The range of constants to be used
     :param single_variable_chance: The chance of a single variable being used as an input, as a function of the maximum depth - the current depth
     :param complex_functions: If the constructed functions can be complex, or if only the real portion of them should be returned
+    :param min_num_params: The minimum number of parameters a function should have, if a function has fewer parameters, it will be discarded
     :param prune_constants: If a function should be discarded if it evaluates to be constant by **test_constant**
     :param num_test_points: The number of test points to be used by **test_constant**
     :param tolerance: The tolerance to be used by **test_constant**
@@ -324,7 +330,10 @@ def generate_dataset(num_functions: int, directory_path: str, num_params: int, f
                                                    constant_chance=constant_chance, constant_range=constant_range,
                                                    single_variable_chance=single_variable_chance, complex_functions=complex_functions,
                                                    overshoot=overshoot, num_processes=num_processes, max_wait=max_generate_wait)
-    dataset = prune_function_list(dataset, prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
+    dataset = prune_function_list(dataset, min_num_params=min_num_params,
+                                  prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance,
+                                  complex_functions=complex_functions, round_n=round_n,
+                                  max_wait=max_prune_wait, num_processes=num_processes)
     while len(dataset) < num_functions:
         print(len(dataset))
         temp_dataset = construct_random_scalar_function_set(num_functions - len(dataset), num_params,
@@ -332,12 +341,15 @@ def generate_dataset(num_functions: int, directory_path: str, num_params: int, f
                                                    constant_chance=constant_chance, constant_range=constant_range,
                                                    single_variable_chance=single_variable_chance, complex_functions=complex_functions,
                                                    overshoot=2.5 * overshoot, num_processes=num_processes, max_wait=max_generate_wait)
-        dataset |= prune_function_list(temp_dataset, prune_constants=prune_constants, complex_functions=complex_functions, round_n=round_n, max_wait=max_prune_wait, num_processes=num_processes)
+        dataset |= prune_function_list(temp_dataset, min_num_params=min_num_params,
+                                  prune_constants=prune_constants, num_test_points=num_test_points, tolerance=tolerance,
+                                  complex_functions=complex_functions, round_n=round_n,
+                                  max_wait=max_prune_wait, num_processes=num_processes)
     dataset = list(dataset)
     np.random.shuffle(dataset)
     dataset = dataset[:num_functions]
     print("\rDataset fully generated, saving to file")
-    with open(f"{directory_path}/n{num_functions}-x{num_params}-y1.json", 'w') as f:
+    with open(f"{directory_path}/n{num_functions}-x{num_params}-y1-d{max_depth}.json", 'w') as f:
         json.dump([str(datum) for datum in dataset], f, indent=4)
     print(f"Dataset saved to {directory_path}/n{num_functions}-x{num_params}-y1-d{max_depth}.json")
     end_time = datetime.datetime.now()
@@ -349,7 +361,7 @@ def generate_dataset(num_functions: int, directory_path: str, num_params: int, f
 def main():
     load_functions_dict("datasets/standard_functions.json")
     generate_dataset(
-        10000,
+        100000,
         "datasets",
         1,
         function_library=functions,
