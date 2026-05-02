@@ -300,7 +300,7 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=10, tol
         traceback.print_exc()
         return None
 
-def prune_function_set(function_set: list | set, prune_constants=True, num_test_points=10, tolerance=0.000001, complex_functions=False, round_n: int | None = 2, num_processes: int | None = None, max_wait=2.0) -> set:
+def prune_function_set(function_set: list | set, prune_constants=True, num_test_points=10, tolerance=0.000001, complex_functions=False, round_n: int | None = 2, num_processes: int | None = None, max_wait=1.0) -> set:
     """
         Simplifies and tests each function in a set, using certain criteria to determine if it should be discarded.
         
@@ -348,10 +348,10 @@ def prune_function_set(function_set: list | set, prune_constants=True, num_test_
     return new_function_set
 
 ARITHMETIC_BIFUNCTIONS = [
-    sympify("a + b"),
-    sympify("a - b"),
-    sympify("a * b"),
-    sympify("a / b")
+    "a + b",
+    "a - b",
+    "a * b",
+    "a / b"
 ]
 def append_symbols(function: Basic, num_symbols: int, bifunction_library=ARITHMETIC_BIFUNCTIONS):
     """
@@ -361,28 +361,33 @@ def append_symbols(function: Basic, num_symbols: int, bifunction_library=ARITHME
     *a* and *b* are variables not in the function and *f* is a bifunction from the **bifunction_library**.
     :param function: The function to append symbols to
     :param num_symbols: The total number of symbols the final function should have
-    :param bifunction_library: A list of bifunctions as SymPy expressions with symbols *a* and *b*
+    :param bifunction_library: A list of bifunctions as strings with symbols *a* and *b*
     :return: The function with symbols appended
     """
     if len(function.free_symbols) >= num_symbols:
         return function
-    unused_symbols = set(symbols(f"x:{num_symbols}")) - function.free_symbols
-    a, b = symbols("a b")
+    free_symbols = {str(symbol) for symbol in function.free_symbols}
+    unused_symbols = {f"x{i}" for i in range(num_symbols)} - free_symbols
+    str_function = str(function)
     while len(unused_symbols) > 0:
-        x_pop: Basic = np.random.choice(list(function.free_symbols))
+        x_pop: str = np.random.choice(list(free_symbols))
+        free_symbols.remove(x_pop)
         unused_symbols.add(x_pop)
+
         x_add_1, x_add_2 = np.random.choice(list(unused_symbols), 2, replace=False)
         unused_symbols.remove(x_add_1)
         unused_symbols.remove(x_add_2)
+        free_symbols.add(x_add_1)
+        free_symbols.add(x_add_2)
 
-        bifunc: Basic = np.random.choice(bifunction_library)
-        bifunc = bifunc.subs({a: x_add_1, b: x_add_2})
-
-        function = function.subs({x_pop: bifunc}, simultaneous=True)
-    return function
+        bifunc: str = np.random.choice(bifunction_library).copy()
+        bifunc = bifunc.replace("a", x_add_1)
+        bifunc = bifunc.replace("b", x_add_2)
+        str_function = str_function.replace(x_pop, bifunc)
+    return sympify(str_function)
 
 def append_symbols_set(function_set: list | set, num_symbols: int, bifunction_library=ARITHMETIC_BIFUNCTIONS,
-                      num_processes: int | None = None, max_wait=2.0):
+                      num_processes: int | None = None, max_wait=1.0):
     """
         Appends new symbols to all functions in a set until each has a given number of symbols.
 
@@ -394,7 +399,7 @@ def append_symbols_set(function_set: list | set, num_symbols: int, bifunction_li
         Will print telemetry readouts to the terminal during processing.
         :param function_set: A list or set of functions to append symbols to
         :param num_symbols: The total number of symbols the final functions should have
-        :param bifunction_library: A list of bifunctions as SymPy expressions with symbols *a* and *b*
+        :param bifunction_library: A list of bifunctions as strings with symbols *a* and *b*
         :param num_processes: The maximum number of processes to use for parallelization, if None, will use all available processes
         :param max_wait: The maximum time to wait for a function to be appended to before moving on to the next one
         :return: The set of functions with symbols appended
@@ -413,6 +418,7 @@ def append_symbols_set(function_set: list | set, num_symbols: int, bifunction_li
                 continue
             except Exception as e:
                 print(f"\rError: {e}", flush=True)
+                traceback.print_exc()
     new_function_set = set(results)
     new_function_set.discard(None)
     end_time = datetime.datetime.now()
@@ -427,7 +433,7 @@ def generate_dataset(num_functions: int, directory_path: str, num_symbols: int, 
                      single_variable_chance=standard_single_variable_chance, complex_functions=False, 
                      prune_constants=True, num_test_points=10, tolerance=0.000001,
                      round_n: None | int = 3, append_missing_symbols=True, bifunction_library=ARITHMETIC_BIFUNCTIONS,
-                     num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=2.0, max_append_wait=2.0):
+                     num_processes: int | None = None, max_generate_wait=1.0, max_prune_wait=1.0, max_append_wait=1.0):
     """
     Generates a dataset of random scalar functions of a certain size using **construct_random_scalar_function_set**
     and **prune_function_set**. This dataset is saved to a JSON file as a list of strings.
@@ -461,7 +467,7 @@ def generate_dataset(num_functions: int, directory_path: str, num_symbols: int, 
     :param tolerance: The tolerance to be used by **test_constant**
     :param round_n: A number of decimal places to round functions to, if None, no rounding will be performed
     :param append_missing_symbols: If missing symbols should be appended with **append_symbols_set** after pruning
-    :param bifunction_library: A list of bifunctions as SymPy expressions with symbols *a* and *b* to be used by **append_symbols_set**
+    :param bifunction_library: A list of bifunctions as strings with symbols *a* and *b* to be used by **append_symbols_set**
     :param num_processes: The maximum number of processes to use for parallelization, if None, will use all available processes
     :param max_generate_wait: The maximum time to wait for a function to be constructed before moving on to the next one
     :param max_prune_wait: The maximum time to wait for a pruned before moving on to the next one
