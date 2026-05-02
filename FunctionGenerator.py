@@ -334,7 +334,7 @@ def prune_function_set(function_set: list | set, prune_constants=True, num_test_
                 if n is not None:
                     results.append(n)
                 i += 1
-            except TimeoutError, ValueError, ArithmeticError, SyntaxError, ZeroDivisionError, TypeError:
+            except TimeoutError, ValueError, ArithmeticError, SyntaxError, ZeroDivisionError, TypeError, OverflowError:
                 continue
             except Exception as e:
                 print(f"\rError: {e}", flush=True)
@@ -348,12 +348,12 @@ def prune_function_set(function_set: list | set, prune_constants=True, num_test_
     return new_function_set
 
 ARITHMETIC_BIFUNCTIONS = [
-    "a + b",
-    "a - b",
-    "a * b",
-    "a / b"
+    "(a + b)",
+    "(a - b)",
+    "(a * b)",
+    "(a / b)"
 ]
-def append_symbols(function: Basic, num_symbols: int, bifunction_library=ARITHMETIC_BIFUNCTIONS):
+def append_symbols(function: Basic | Expr | str | np.str_, num_symbols: int, bifunction_library=ARITHMETIC_BIFUNCTIONS):
     """
     Appends new symbols to a function until it has a given number of symbols.
 
@@ -364,11 +364,20 @@ def append_symbols(function: Basic, num_symbols: int, bifunction_library=ARITHME
     :param bifunction_library: A list of bifunctions as strings with symbols *a* and *b*
     :return: The function with symbols appended
     """
-    if len(function.free_symbols) >= num_symbols:
-        return function
-    free_symbols = {str(symbol) for symbol in function.free_symbols}
+    free_symbols = set()
+    str_function = ""
+    if type(function) == str or type(function) == np.str_:
+        str_function = function
+        free_symbols = {f"x{i}" if regex.search(f"x{i}", str(function)) else None for i in range(num_symbols)}
+        free_symbols.discard(None)
+        if len(free_symbols) >= num_symbols:
+            return sympify(str_function)
+    else:
+        if len(function.free_symbols) >= num_symbols:
+            return function
+        free_symbols = {str(symbol) for symbol in function.free_symbols}
+        str_function = str(function)
     unused_symbols = {f"x{i}" for i in range(num_symbols)} - free_symbols
-    str_function = str(function)
     while len(unused_symbols) > 0:
         x_pop: str = np.random.choice(list(free_symbols))
         free_symbols.remove(x_pop)
@@ -472,7 +481,7 @@ def generate_dataset(num_functions: int, directory_path: str, num_symbols: int, 
     :param max_generate_wait: The maximum time to wait for a function to be constructed before moving on to the next one
     :param max_prune_wait: The maximum time to wait for a pruned before moving on to the next one
     :param max_append_wait: The maximum time to wait for a function to be appended to before moving on to the next one
-    :return:
+    :return: The generated dataset
     """
     start_time = datetime.datetime.now()
     dataset = construct_random_scalar_function_set(num_functions, num_symbols, function_library=function_library,
@@ -510,11 +519,90 @@ def generate_dataset(num_functions: int, directory_path: str, num_symbols: int, 
           f"\nFunctions Generated per Second: {num_functions / time_elapsed.total_seconds():.2f}\n")
     return dataset
 
+def randomize_function(function_library: list, num_symbols: int):
+    """
+    Produces a random function by randomizing the symbols in a random function from the given function library.
+    :param function_library: A list of functions to choose from
+    :param num_symbols: The number of symbols available for the function to have
+    :return: A randomized function as a string
+    """
+    datum: str = np.random.choice(function_library)
+    regex.sub("x\\d+", lambda m: "x" + str(np.random.randint(num_symbols)), datum)
+    return datum
+
+def extend_dataset(num_functions: int, dataset_path: str, directory_path: str, num_symbols: int,
+                   overshoot=0.05, append_missing_symbols=True, bifunction_library=ARITHMETIC_BIFUNCTIONS,
+                   num_processes: int | None = None, max_randomize_wait=1.0, max_append_wait=1.0):
+    """
+    Extends an existing dataset to more functions or more symbols or both by randomizing a given number
+    of functions from that dataset using **randomize_function**.
+    The expanded dataset is saved to a JSON file as a list of strings.
+
+    The JSON file will be saved to **directory_path** as **n{num_functions}-x{symbols}-y1-ex.json**.
+
+    This method uses parallel processing to speed up randomizing functions and appending missing symbols.
+
+    Will print telemetry readouts to the terminal during processing.
+
+    :param num_functions: The number of functions that will make up the extended dataset
+    :param dataset_path: The file path to the dataset to be extended
+    :param directory_path: The path to the directory where the extended dataset will be saved
+    :param num_symbols: The number of symbols that each function in the extended dataset will have
+    :param overshoot: A multiple of the desired number of functions to attempt to overshoot by: true_num_functions = num_functions * (1 + overshoot)
+    :param append_missing_symbols: If missing symbols should be appended with **append_symbols_set** after pruning
+    :param bifunction_library: A list of bifunctions as strings with symbols *a* and *b* to be used by **append_symbols_set**
+    :param num_processes: The maximum number of processes to use for parallelization, if None, will use all available processes
+    :param max_randomize_wait: The maximum time to wait for a function to be randomized before moving on to the next one
+    :param max_append_wait: The maximum time to wait for a function to be appended to before moving on to the next one
+    :return: The expanded dataset
+    """
+    start_time = datetime.datetime.now()
+    dataset = set()
+    true_num_functions = round(num_functions * (1.0 + overshoot))
+    print(f"Extending dataset from {dataset_path}")
+    with open(dataset_path, 'r') as f:
+        temp_dataset = json.load(f)
+        randomize_function_partial = functools.partial(randomize_function, num_symbols=num_symbols)
+        results = []
+        with ProcessPool(max_workers=num_processes if num_processes is not None else multiprocessing.cpu_count()) as pool:
+            future = pool.map(randomize_function_partial, [temp_dataset for _ in range(true_num_functions)], timeout=max_randomize_wait)
+            iterator = future.result()
+            for _ in tqdm(range(true_num_functions), desc="Randomizing Functions"):
+                try:
+                    results.append(next(iterator))
+                except TimeoutError, ValueError, ArithmeticError, SyntaxError, ZeroDivisionError:
+                    continue
+                except Exception as e:
+                    print(f"\rError: {e}", flush=True)
+                    traceback.print_exc()
+    if append_missing_symbols:
+        dataset = append_symbols_set(results, num_symbols, bifunction_library=bifunction_library,
+                                    num_processes=num_processes, max_wait=max_append_wait)
+
+    dataset = list(dataset)
+    np.random.shuffle(dataset)
+    dataset = dataset[:num_functions]
+    print("\rDataset fully expanded, saving to file")
+    with open(f"{directory_path}/n{num_functions}-x{num_symbols}-y1-ex.json", 'w') as f:
+        json.dump([str(datum) for datum in dataset], f, indent=4)
+    print(f"Dataset saved to {directory_path}/n{num_functions}-x{num_symbols}-y1-ex.json")
+    end_time = datetime.datetime.now()
+    time_elapsed = (end_time - start_time)
+    print(f"\nTotal Expansion Time: {(datetime.datetime(1, 1, 1) + time_elapsed).strftime("%H:%M:%S")}"
+          f"\nFunctions per Second: {num_functions / time_elapsed.total_seconds():.2f}\n")
+    return dataset
+
 def main():
+    #extend_dataset(
+    #    100000,
+    #    "datasets/n1000-x5-y1-d5.json",
+    #    "datasets",
+    #    10
+    #)
     load_functions_dict("datasets/standard_functions.json")
     np.random.shuffle(functions)
     generate_dataset(
-        1000,
+        100000,
         "datasets",
         5,
         function_library=functions,
