@@ -11,6 +11,7 @@ from tqdm import tqdm
 import functools
 import re as regex
 
+import ParallelProcessing as parallel_processing
 functions = []
 weights = []
 
@@ -283,7 +284,7 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=10, tol
     :return: None, or a simplified and rounded version of the function
     """
     try:
-        if prune_constants and test_constant(function, num_test_points, tolerance):
+        if prune_constants and len(function.free_symbols) == 0:
             return None
         func_new = simplify(function)
         if func_new == nan:
@@ -379,20 +380,23 @@ def append_symbols(function: Basic | Expr | str | np.str_, num_symbols: int, bif
         str_function = str(function)
     unused_symbols = {f"x{i}" for i in range(num_symbols)} - free_symbols
     while len(unused_symbols) > 0:
-        x_pop: str = np.random.choice(list(free_symbols))
-        free_symbols.remove(x_pop)
-        unused_symbols.add(x_pop)
+        try:
+            x_pop: str = np.random.choice(list(free_symbols))
+            free_symbols.remove(x_pop)
+            unused_symbols.add(x_pop)
 
-        x_add_1, x_add_2 = np.random.choice(list(unused_symbols), 2, replace=False)
-        unused_symbols.remove(x_add_1)
-        unused_symbols.remove(x_add_2)
-        free_symbols.add(x_add_1)
-        free_symbols.add(x_add_2)
+            x_add_1, x_add_2 = np.random.choice(list(unused_symbols), 2, replace=False)
+            unused_symbols.remove(x_add_1)
+            unused_symbols.remove(x_add_2)
+            free_symbols.add(x_add_1)
+            free_symbols.add(x_add_2)
 
-        bifunc: str = np.random.choice(bifunction_library).copy()
-        bifunc = bifunc.replace("a", x_add_1)
-        bifunc = bifunc.replace("b", x_add_2)
-        str_function = str_function.replace(x_pop, bifunc)
+            bifunc: str = np.random.choice(bifunction_library).copy()
+            bifunc = bifunc.replace("a", x_add_1)
+            bifunc = bifunc.replace("b", x_add_2)
+            str_function = str_function.replace(x_pop, bifunc)
+        except ValueError:
+            continue
     return sympify(str_function)
 
 def append_symbols_set(function_set: list | set, num_symbols: int, bifunction_library=ARITHMETIC_BIFUNCTIONS,
@@ -600,16 +604,36 @@ def main():
     #    10
     #)
     load_functions_dict("datasets/standard_functions.json")
-    np.random.shuffle(functions)
-    generate_dataset(
-        100000,
-        "datasets",
-        5,
-        function_library=functions,
-        weight_list=weights,
-        weighted=True,
-        max_depth=5,
+    results = parallel_processing.queued_parallel_processing(
+        1000,
+        construct_random_scalar_function,
+        {
+            "_symbols": list(symbols('x:5')),
+            "function_library": functions,
+            "weight_list": weights,
+            "max_depth": 5,
+        },
+        [
+            prune_function,
+            append_symbols,
+        ],
+        [
+            {},
+            {"num_symbols": 5},
+        ],
+        json_path="datasets/n1000-x5-y1-d5.json",
+        debug=True
     )
+    #print(results)
+    #generate_dataset(
+    #    100000,
+    #    "datasets",
+    #    5,
+    #    function_library=functions,
+    #    weight_list=weights,
+    #    weighted=True,
+    #    max_depth=5,
+    #)
 
 if __name__ == "__main__":
     freeze_support()
