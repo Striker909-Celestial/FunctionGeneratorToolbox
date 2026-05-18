@@ -301,6 +301,15 @@ def prune_function(function: Expr, prune_constants=True, num_test_points=10, tol
         traceback.print_exc()
         return None
 
+def prune_function_string(function: str, prune_constants=True, complex_functions=False, round_n=2):
+    if prune_constants and regex.search("x\\d+", function) is None:
+        return None
+    if not complex_functions:
+        function = "re(" + function + ")"
+    if round_n is not None:
+        function = regex.sub("\\d+\\.\\d+", lambda x: str(round(float(x.group(0)), round_n)), function)
+    return function
+
 def prune_function_set(function_set: list | set, prune_constants=True, num_test_points=10, tolerance=0.000001, complex_functions=False, round_n: int | None = 2, num_processes: int | None = None, max_wait=1.0) -> set:
     """
         Simplifies and tests each function in a set, using certain criteria to determine if it should be discarded.
@@ -523,15 +532,18 @@ def generate_dataset(num_functions: int, directory_path: str, num_symbols: int, 
           f"\nFunctions Generated per Second: {num_functions / time_elapsed.total_seconds():.2f}\n")
     return dataset
 
-def randomize_function(function_library: list, num_symbols: int):
+def randomize_function(function_library: list, num_symbols: int, randomize_symbols=True):
     """
     Produces a random function by randomizing the symbols in a random function from the given function library.
     :param function_library: A list of functions to choose from
     :param num_symbols: The number of symbols available for the function to have
+    :param randomize_symbols: If symbols should be randomized within the selected function
     :return: A randomized function as a string
     """
-    datum: str = np.random.choice(function_library)
-    regex.sub("x\\d+", lambda m: "x" + str(np.random.randint(num_symbols)), datum)
+    datum = np.random.choice(function_library)
+    if randomize_symbols:
+        datum = str(datum)
+        regex.sub("x\\d+", lambda m: "x" + str(np.random.randint(num_symbols)), datum)
     return datum
 
 def extend_dataset(num_functions: int, dataset_path: str, directory_path: str, num_symbols: int,
@@ -596,44 +608,67 @@ def extend_dataset(num_functions: int, dataset_path: str, directory_path: str, n
           f"\nFunctions per Second: {num_functions / time_elapsed.total_seconds():.2f}\n")
     return dataset
 
+def to_str(s):
+    return str(s)
+
+def merge_to_vector_function(*funcs: Basic | Expr) -> MutableDenseMatrix | None:
+    try:
+        return Matrix(list(funcs))
+    except:
+        return None
+
 def main():
-    #extend_dataset(
-    #    100000,
-    #    "datasets/n1000-x5-y1-d5.json",
-    #    "datasets",
-    #    10
-    #)
-    load_functions_dict("datasets/standard_functions.json")
-    results = parallel_processing.queued_parallel_processing(
+    #load_functions_dict("datasets/standard_functions.json")
+    # with debug: ~16 it/s
+    # without debug: ~13 it/s
+    # results = parallel_processing.queued_parallel_processing(
+    #     1000,
+    #     construct_random_scalar_function,
+    #     {
+    #         "_symbols": list(symbols('x:5')),
+    #         "function_library": functions,
+    #         "weight_list": weights,
+    #         "max_depth": 5,
+    #     },
+    #     [
+    #         to_str,
+    #         prune_function_string,
+    #         append_symbols,
+    #     ],
+    #     [
+    #         {},
+    #         {},
+    #         {"num_symbols": 5},
+    #     ],
+    #     json_path="datasets/n1000-x5-y1-d5.json",
+    #     debug=True
+    # )
+    #print(results)
+    print("Loading dataset...", end="")
+    load_functions_list("datasets/n1000-x5-y1-d5.json")
+    print("\rDataset loaded    ")
+    results = parallel_processing.buffered_parallel_processing(
         1000,
-        construct_random_scalar_function,
-        {
-            "_symbols": list(symbols('x:5')),
-            "function_library": functions,
-            "weight_list": weights,
-            "max_depth": 5,
-        },
+        randomize_function,
+        {"function_library": functions, "num_symbols": 5, "randomize_symbols": False},
         [
-            prune_function,
-            append_symbols,
+            merge_to_vector_function,
+            to_str,
         ],
         [
             {},
-            {"num_symbols": 5},
+            {},
         ],
-        json_path="datasets/n1000-x5-y1-d5.json",
-        debug=True
+        [
+            [-1, -1, -1, -1, -1],
+            [0]
+        ],
+        num_processes=1,
+        json_path="datasets/n1000-x5-y5-d5.json",
+        debug=True,
+        debug_buffers=True,
+        debug_requests=True
     )
-    #print(results)
-    #generate_dataset(
-    #    100000,
-    #    "datasets",
-    #    5,
-    #    function_library=functions,
-    #    weight_list=weights,
-    #    weighted=True,
-    #    max_depth=5,
-    #)
 
 if __name__ == "__main__":
     freeze_support()
