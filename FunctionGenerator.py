@@ -540,7 +540,7 @@ def randomize_function(function_library: list, num_symbols: int, randomize_symbo
     :param randomize_symbols: If symbols should be randomized within the selected function
     :return: A randomized function as a string
     """
-    datum = np.random.choice(function_library)
+    datum = np.random.choice(function_library)["func"]
     if randomize_symbols:
         datum = str(datum)
         regex.sub("x\\d+", lambda m: "x" + str(np.random.randint(num_symbols)), datum)
@@ -613,7 +613,7 @@ def to_str(s):
 
 def merge_to_vector_function(*funcs: Basic | Expr) -> MutableDenseMatrix | None:
     try:
-        return Matrix(list(funcs))
+        return list(funcs)
     except:
         return None
 
@@ -663,8 +663,9 @@ def main():
             [-1, -1, -1, -1, -1],
             [0]
         ],
-        num_processes=1,
+        num_processes=8,
         json_path="datasets/n1000-x5-y5-d5.json",
+        max_wait=2.0,
         debug=True,
         debug_buffers=True,
         debug_requests=True
