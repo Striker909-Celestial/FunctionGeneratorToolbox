@@ -8,6 +8,7 @@ import multiprocessing
 from func_timeout import func_timeout, FunctionTimedOut
 import datetime
 import numpy as np
+from collections import Counter
 
 def queued_generator[_T](generator: Callable[..., _T], generator_args: dict) -> tuple[int, _T]:
     """
@@ -225,7 +226,10 @@ class Buffer[_T]:
         self.post_processor = post_processor
         self.post_processor_args = post_processor_args
         self.input_sources = input_sources
-        self.input_buffer = multiprocessing.Array(ctypes.py_object, [None for _ in input_sources])
+        self.num_inputs = len(input_sources)
+        self.input_buffer = multiprocessing.Queue()
+        self.input_buffer_mapping = []
+        #self.input_buffer = multiprocessing.Array(ctypes.py_object, [None for _ in input_sources])
         self.request_sent = False
 
         self.total_time = multiprocessing.Value('d', 0.0)
@@ -243,26 +247,26 @@ class Buffer[_T]:
         The number of slots in the buffer that are filled.
         :return: The number of filled slots in the buffer
         """
-        n = 0
-        for i in range(len(self.input_sources)):
-            if self.input_buffer[i] is not None:
-                n += 1
-        return n
+        return self.input_buffer.qsize()
 
     def process_buffer(self) -> bool | tuple[int, _T]:
         """
         Attempts to run the post-processor on the buffer's contents.
         :return: False if the buffer is not full, otherwise the post-processor's output
         """
-        if any(self.input_buffer[i] is None for i in range(len(self.input_sources))):
+        if self.count() < self.num_inputs:
             # Returns false if the buffer is not full
             return False
         self.num_calls.value += 1
-        inputs = []
+        inputs = [None for _ in range(self.num_inputs)]
         self.request_sent = False
-        for i in range(len(self.input_sources)):
-            inputs.append(self.input_buffer[i])
-            self.input_buffer[i] = None
+        for i, s in enumerate(self.input_buffer_mapping):
+            for j in self.input_sources:
+                if s != j or inputs[i] is not None:
+                    continue
+                inputs[i] = self.input_buffer.get()
+                break
+        self.input_buffer_mapping = []
         output = self.post_processor(*inputs, **self.post_processor_args)
         return self.index, output
 
@@ -275,10 +279,9 @@ class Buffer[_T]:
         """
         if self.request_sent:
             return False
-        for i, s in enumerate(self.input_sources):
-            if self.input_buffer[i] is not None:
-                continue
-            requests[s].put(self.index)
+        missing_inputs = list(Counter(self.input_sources) - Counter(self.input_buffer_mapping))
+        for m in missing_inputs:
+            requests[m].put(self.index)
         self.request_sent = True
         return True
 
@@ -289,15 +292,9 @@ class Buffer[_T]:
             return False
         token_index = token[0]
         start = datetime.datetime.now()
-        # Attempts to place the token in the buffer
-        for i, s in enumerate(self.input_sources):
-            if token_index == s and self.input_buffer[i] is None:
-                self.input_buffer[i] = token[1]
-                break
-            if i == len(self.input_sources) - 1:
-                # Returns false if the token cannot be placed in the buffer
-                self.total_time.value += (datetime.datetime.now() - start).total_seconds()
-                return False
+        # Places the token in the buffer
+        self.input_buffer.put(token[1])
+        self.input_buffer_mapping.append(token_index)
         if auto_run_post_processor:
             process_output = func_timeout(max_wait, self.process_buffer)
             if process_output is not False:
