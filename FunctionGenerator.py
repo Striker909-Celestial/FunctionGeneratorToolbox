@@ -12,6 +12,7 @@ import functools
 import re as regex
 
 import ParallelProcessing as parallel_processing
+from Processor import Processor
 functions = []
 weights = []
 
@@ -617,6 +618,13 @@ def merge_to_vector_function(*funcs: Basic | Expr) -> MutableDenseMatrix | None:
     except:
         return None
 
+def rand():
+    return np.random.randint(-10, 10)
+def add(a, b):
+    return a + b
+def mul(a, b):
+    return a * b
+
 def main():
     #load_functions_dict("datasets/standard_functions.json")
     # with debug: ~16 it/s
@@ -644,7 +652,7 @@ def main():
     #     debug=True
     # )
     #print(results)
-    print("Loading dataset...", end="")
+    """print("Loading dataset...", end="")
     load_functions_list("datasets/n1000-x5-y1-d5.json")
     print("\rDataset loaded    ")
     results = parallel_processing.buffered_parallel_processing(
@@ -669,7 +677,22 @@ def main():
         debug=True,
         debug_buffers=True,
         debug_requests=True
+    )"""
+
+    results = parallel_processing.buffered_parallel_processing(
+        {"add": 1000, "mul": 1000},
+        [
+            Processor("rand", rand, {}, True),
+            Processor("add", add, {"a": "@rand|add|mul", "b": "@rand|add|mul"}, False),
+            Processor("mul", mul, {"a": "@rand|add|mul", "b": "@rand|add|mul"}, False),
+        ],
+        debug_outputs=True,
+        debug_queue=True,
+        debug_rates=True,
+        debug_buffers=True,
+        debug_requests=True,
     )
+    print(results)
 
 if __name__ == "__main__":
     freeze_support()
